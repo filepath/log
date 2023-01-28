@@ -122,7 +122,7 @@ func (c *baseLogger) WithName(name string) Logger {
 }
 
 func (c *baseLogger) WithValues(keysAndValues ...interface{}) Logger {
-	l := c.l.With(handleFields(c.l, keysAndValues)...)
+	l := c.l.With(handleFields(keysAndValues)...)
 	return newLoggerWithExtraSkip(l, -1)
 }
 
@@ -178,11 +178,8 @@ func (c *baseLogger) Fatal(msg string, fields ...zap.Field) {
 	c.l.Fatal(msg, fields...)
 }
 
-// copy form http://github.com/go-logr/zapr/zapr.go
-// handleFields converts a bunch of arbitrary key-value pairs into Zap fields.  It takes
-// additional pre-converted Zap fields, for use with automatically attached fields, like
-// `error`.
-func handleFields(l *zap.Logger, args []interface{}, additional ...zap.Field) []zap.Field {
+// handleFields convert key value pairs into Zap fields
+func handleFields(args []interface{}, additional ...zap.Field) []zap.Field {
 	if len(args) == 0 {
 		return additional
 	}
