@@ -72,6 +72,7 @@ func NewZapCore(opts *Config, fileName string, level zapcore.LevelEnabler) zapco
 	encoderConfig.TimeKey = "timestamp"
 	encoderConfig.MessageKey = "message"
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoderConfig.FunctionKey = "func"
 	// Do you need to use json format ?
 	encoder := zapcore.NewConsoleEncoder(encoderConfig)
 	if opts.JsonEncode {
