@@ -70,6 +70,7 @@ func newWriteSyncer(opts *Config, fileName string) zapcore.WriteSyncer {
 func NewZapCore(opts *Config, fileName string, level zapcore.LevelEnabler) zapcore.Core {
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.TimeKey = "timestamp"
+	encoderConfig.TimeKey = "message"
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	// Do you need to use json format ?
 	encoder := zapcore.NewConsoleEncoder(encoderConfig)
