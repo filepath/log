@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
 
 	"go.uber.org/zap"
@@ -52,8 +52,11 @@ func newWriteSyncer(opts *Config, fileName string) zapcore.WriteSyncer {
 	if fileName == "" {
 		fileName = opts.LogFile
 	}
+	if opts.LogDir == "" {
+		opts.LogDir = os.Getenv("LOG_DIR")
+	}
 	hook := lumberjack.Logger{
-		Filename:   path.Join(opts.LogDir, fileName),
+		Filename:   filepath.Join(opts.LogDir, fileName),
 		MaxSize:    opts.MaxSize,
 		MaxBackups: opts.MaxBackups,
 		MaxAge:     opts.MaxAge,
