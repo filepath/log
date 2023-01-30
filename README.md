@@ -15,7 +15,10 @@ func main()  {
 
 }
 ```
-the result is `{"level":"info","timestamp":"2023-01-30T16:56:45.230+0800","caller":"test01/01.go:8","message":"test msg"}`
+the result is
+```json
+{"level":"info","timestamp":"2023-01-30T16:56:45.230+0800","caller":"test01/01.go:8","message":"test msg"}
+```
 
 ### use custom configuration
 ```go
