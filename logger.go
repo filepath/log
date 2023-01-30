@@ -2,18 +2,21 @@ package log
 
 import (
 	"context"
+	"os"
+
 	"go.uber.org/zap"
 )
 
 type Logger interface {
+	// AddCallerSkip new logger with callstack skipping.
 	AddCallerSkip(callerSkip int) Logger
 
-	// WithName add key-value pairs to logger
+	// WithName adds some key-value pairs of context to a logger.
 	WithName(name string) Logger
 
 	WithContext(ctx context.Context) Logger
 
-	// WithValues adds a new element to the logger's name
+	// WithValues adds a new element to the logger's name.
 	WithValues(keysAndValues ...interface{}) Logger
 
 	Debugf(format string, a ...interface{})
@@ -38,10 +41,36 @@ type Logger interface {
 }
 
 type baseLogger struct {
-	l *zap.Logger
+	*zap.Logger
 }
 
 var logger Logger
+
+// New create logger with options and init global logger
+func New(opts *Config) Logger {
+	l := Zap(opts)
+	logger = &baseLogger{l}
+	// replaces the zap global Logger and SugaredLogger
+	zap.ReplaceGlobals(l)
+	return logger
+}
+
+// defaultLogger new default Logger if logger is nil
+func defaultLogger() Logger {
+	if logger == nil {
+		logger = newDefaultLogger()
+	}
+	return logger
+}
+
+// newDefaultLogger if not new a logger, will generate a default logger
+func newDefaultLogger() Logger {
+	return New(&Config{
+		LogDir:       os.Getenv("LOG_DIR"),
+		JsonEncode:   true,
+		FilePerLevel: true,
+	})
+}
 
 func Debugf(format string, a ...interface{}) {
 	defaultLogger().Debugf(format, a...)
@@ -93,12 +122,4 @@ func WithValues(keysAndValues ...interface{}) Logger {
 
 func WithContext(ctx context.Context) Logger {
 	return defaultLogger().WithContext(ctx)
-}
-
-// defaultLogger new default Logger if logger is nil
-func defaultLogger() Logger {
-	if logger == nil {
-		logger = newDefaultLogger()
-	}
-	return logger
 }

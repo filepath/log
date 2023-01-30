@@ -3,47 +3,22 @@ package log
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
+	"strings"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
-	"log"
-	"os"
-	"path"
 )
 
-const LoggerKey = iota
+const LoggerKey = "_logger"
 
-// InitWithOpts init logger with options
-func InitWithOpts(opts *Config) {
-	logger = &baseLogger{l: newZapLogger(opts)}
-}
-
-// newDefaultLogger init logger use default config
-func newDefaultLogger() Logger {
-	return New(&Config{
-		LogDir:          "",
-		LogFile:         "app.log",
-		MaxAge:          0,
-		MaxBackups:      0,
-		MaxSize:         0,
-		Compress:        false,
-		LogLevel:        "debug",
-		JsonEncode:      true,
-		StacktraceLevel: "error",
-		FilePerLevel:    false,
-	})
-}
-
-// New create logger with options
-func New(opts *Config) Logger {
-	return &baseLogger{l: newZapLogger(opts)}
-}
-
-// newZapLogger new a zap logger
-func newZapLogger(opts *Config) *zap.Logger {
+// Zap init zap logger
+func Zap(opts *Config) *zap.Logger {
 	var cores []zapcore.Core
 	if opts.FilePerLevel {
-		// a log file per log level
+		// Each level of log output to the corresponding log file. eg debug.log info.log warn.log error.log
 		debugPriority := zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
 			return lev == zap.DebugLevel
 		})
@@ -56,55 +31,49 @@ func newZapLogger(opts *Config) *zap.Logger {
 		errorPriority := zap.LevelEnablerFunc(func(lev zapcore.Level) bool {
 			return lev >= zap.ErrorLevel
 		})
-		cores = append(cores, newZapCore(opts, "debug.log", debugPriority),
-			newZapCore(opts, "info.log", infoPriority),
-			newZapCore(opts, "warn.log", warnPriority),
-			newZapCore(opts, "error.log", errorPriority))
+		cores = append(cores, NewZapCore(opts, "debug.log", debugPriority),
+			NewZapCore(opts, "info.log", infoPriority),
+			NewZapCore(opts, "warn.log", warnPriority),
+			NewZapCore(opts, "error.log", errorPriority))
 	} else {
 		// only one log file for all log level
-		defaultLevel := zap.NewAtomicLevel()
-		defaultLevel.SetLevel(logLevel(opts.LogLevel))
-		cores = append(cores, newZapCore(opts, opts.LogFile, defaultLevel))
+		defaultLevel := zap.NewAtomicLevelAt(logLevel(opts.LogLevel))
+		cores = append(cores, NewZapCore(opts, opts.LogFile, defaultLevel))
+	}
+	if opts.StacktraceLevel == "" {
+		opts.StacktraceLevel = "error"
 	}
 	return zap.New(zapcore.NewTee(cores...), zap.AddCaller(), zap.AddCallerSkip(2),
-		zap.Development(), zap.AddStacktrace(logLevel(opts.StacktraceLevel)))
+		zap.AddStacktrace(logLevel(opts.StacktraceLevel)))
 }
 
-func newWriteSyncer(opts *Config, file string) zapcore.WriteSyncer {
+// newWriteSyncer new file writer , fileName can empty, will use Config.LogFile
+func newWriteSyncer(opts *Config, fileName string) zapcore.WriteSyncer {
+	if fileName == "" {
+		fileName = opts.LogFile
+	}
 	hook := lumberjack.Logger{
-		Filename:   path.Join(opts.LogDir, file),
+		Filename:   path.Join(opts.LogDir, fileName),
 		MaxSize:    opts.MaxSize,
 		MaxBackups: opts.MaxBackups,
 		MaxAge:     opts.MaxAge,
 		Compress:   opts.Compress,
+		LocalTime:  true,
 	}
 	return zapcore.AddSync(&hook)
 }
 
-// newZapCore new zap core and hook for zap logger
-func newZapCore(opts *Config, file string, level zapcore.LevelEnabler) zapcore.Core {
-	encoderConfig := zapcore.EncoderConfig{
-		TimeKey:        "timestamp",
-		LevelKey:       "level",
-		NameKey:        "logger",
-		CallerKey:      "caller",
-		MessageKey:     "message",
-		StacktraceKey:  "stacktrace",
-		FunctionKey:    "func",
-		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    zapcore.LowercaseLevelEncoder,
-		EncodeTime:     zapcore.ISO8601TimeEncoder,
-		EncodeDuration: zapcore.SecondsDurationEncoder,
-		EncodeCaller:   zapcore.ShortCallerEncoder,
-		EncodeName:     zapcore.FullNameEncoder,
-	}
-
+// NewZapCore new zap core and hook for zap logger
+func NewZapCore(opts *Config, fileName string, level zapcore.LevelEnabler) zapcore.Core {
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.TimeKey = "timestamp"
+	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	// Do you need to use json format ?
 	encoder := zapcore.NewConsoleEncoder(encoderConfig)
 	if opts.JsonEncode {
 		encoder = zapcore.NewJSONEncoder(encoderConfig)
 	}
-
-	writeSyncer := newWriteSyncer(opts, file)
+	writeSyncer := newWriteSyncer(opts, fileName)
 
 	if opts.Stdout {
 		writeSyncer = zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), writeSyncer)
@@ -112,21 +81,25 @@ func newZapCore(opts *Config, file string, level zapcore.LevelEnabler) zapcore.C
 	return zapcore.NewCore(encoder, writeSyncer, level)
 }
 
-func (c *baseLogger) AddCallerSkip(callerSkip int) Logger {
-	return newLoggerWithExtraSkip(c.l, callerSkip)
+func (b *baseLogger) AddCallerSkip(callerSkip int) Logger {
+	return newLoggerWithExtraSkip(b.Logger, callerSkip)
 }
 
-func (c *baseLogger) WithName(name string) Logger {
-	l := c.l.Named(name)
+func (b *baseLogger) WithName(name string) Logger {
+	l := b.Logger.Named(name)
 	return newLoggerWithExtraSkip(l, -1)
 }
 
-func (c *baseLogger) WithValues(keysAndValues ...interface{}) Logger {
-	l := c.l.With(handleFields(keysAndValues)...)
+func (b *baseLogger) WithValues(keysAndValues ...interface{}) Logger {
+	l := b.Logger.With(handleFields(keysAndValues)...)
 	return newLoggerWithExtraSkip(l, -1)
 }
 
-func (c *baseLogger) WithContext(ctx context.Context) Logger {
+// WithContext get logger from context, you can set some key value paris into logger with .WithValues method. such as tracId spanId ...
+// example: for gin
+// c.Request = c.Request.WithContext(context.WithValue(ctx, log.LoggerKey, log.WithContext(ctx).WithValues("requestId", requestId, "traceId", traceId)))
+// when you need to print log , you can use log.WithContext(ctx).Warn("some message")
+func (b *baseLogger) WithContext(ctx context.Context) Logger {
 	if ctx == nil {
 		return logger
 	}
@@ -138,64 +111,69 @@ func (c *baseLogger) WithContext(ctx context.Context) Logger {
 	return logger
 }
 
-func (c *baseLogger) Debugf(format string, a ...interface{}) {
-	c.l.Debug(fmt.Sprintf(format, a...))
+func (b *baseLogger) Debugf(format string, a ...interface{}) {
+	b.Logger.Debug(fmt.Sprintf(format, a...))
 }
 
-func (c *baseLogger) Infof(format string, a ...interface{}) {
-	c.l.Info(fmt.Sprintf(format, a...))
+func (b *baseLogger) Infof(format string, a ...interface{}) {
+	b.Logger.Info(fmt.Sprintf(format, a...))
 }
 
-func (c *baseLogger) Warnf(format string, a ...interface{}) {
-	c.l.Warn(fmt.Sprintf(format, a...))
+func (b *baseLogger) Warnf(format string, a ...interface{}) {
+	b.Logger.Warn(fmt.Sprintf(format, a...))
 }
 
-func (c *baseLogger) Errorf(format string, a ...interface{}) {
-	c.l.Error(fmt.Sprintf(format, a...))
+func (b *baseLogger) Errorf(format string, a ...interface{}) {
+	b.Logger.Error(fmt.Sprintf(format, a...))
 }
 
-func (c *baseLogger) Fatalf(format string, a ...interface{}) {
-	c.l.Fatal(fmt.Sprintf(format, a...))
+func (b *baseLogger) Fatalf(format string, a ...interface{}) {
+	b.Logger.Fatal(fmt.Sprintf(format, a...))
 }
 
-func (c *baseLogger) Debug(msg string, fields ...zap.Field) {
-	c.l.Debug(msg, fields...)
+func (b *baseLogger) Debug(msg string, fields ...zap.Field) {
+	b.Logger.Debug(msg, fields...)
 }
 
-func (c *baseLogger) Info(msg string, fields ...zap.Field) {
-	c.l.Info(msg, fields...)
+func (b *baseLogger) Info(msg string, fields ...zap.Field) {
+	b.Logger.Info(msg, fields...)
 }
 
-func (c *baseLogger) Warn(msg string, fields ...zap.Field) {
-	c.l.Warn(msg, fields...)
+func (b *baseLogger) Warn(msg string, fields ...zap.Field) {
+	b.Logger.Warn(msg, fields...)
 }
 
-func (c *baseLogger) Error(msg string, fields ...zap.Field) {
-	c.l.Error(msg, fields...)
+func (b *baseLogger) Error(msg string, fields ...zap.Field) {
+	b.Logger.Error(msg, fields...)
 }
 
-func (c *baseLogger) Fatal(msg string, fields ...zap.Field) {
-	c.l.Fatal(msg, fields...)
+func (b *baseLogger) Fatal(msg string, fields ...zap.Field) {
+	b.Logger.Fatal(msg, fields...)
 }
 
-// handleFields convert key value pairs into Zap fields
+// handleFields converts key value pairs to Zap fields
 func handleFields(args []interface{}, additional ...zap.Field) []zap.Field {
 	if len(args) == 0 {
+		// fast-return if we have no suggared fields.
 		return additional
 	}
 
 	fields := make([]zap.Field, 0, len(args)/2+len(additional))
 	for i := 0; i < len(args); {
+		// check just in case for strongly-typed Zap fields, which is illegal (since
+		// it breaks implementation agnosticism), so we can give a better error message.
 		if _, ok := args[i].(zap.Field); ok {
 			break
 		}
+		// make sure this isn't a mismatched key
 		if i == len(args)-1 {
 			break
 		}
-
+		// process a key value pair, ensuring that the key is a string
 		key, val := args[i], args[i+1]
 		keyStr, isString := key.(string)
 		if !isString {
+			// if the key isn't a string
 			break
 		}
 		fields = append(fields, zap.Any(keyStr, val))
@@ -204,27 +182,25 @@ func handleFields(args []interface{}, additional ...zap.Field) []zap.Field {
 	return append(fields, additional...)
 }
 
-// newLoggerWithExtraSkip allows creation of loggers with variable levels of callstack skipping
+// newLoggerWithExtraSkip allows zap logger with callstack skipping
 func newLoggerWithExtraSkip(l *zap.Logger, callerSkip int) Logger {
-	_l := l.WithOptions(zap.AddCallerSkip(callerSkip))
-	return &baseLogger{l: _l}
+	return &baseLogger{l.WithOptions(zap.AddCallerSkip(callerSkip))}
 }
 
-// logLevel log level string to zap logger level
+// logLevel string logger level to zap logger level, default is debug level
 func logLevel(level string) zapcore.Level {
-	switch level {
+	switch strings.ToLower(level) {
 	case "debug":
 		return zapcore.DebugLevel
 	case "info":
 		return zapcore.InfoLevel
-	case "warn":
+	case "warn", "warning":
 		return zapcore.WarnLevel
 	case "error":
 		return zapcore.ErrorLevel
 	case "fatal":
 		return zapcore.FatalLevel
 	default:
-		log.Fatalf("unknown log level %s", level)
+		return zapcore.DebugLevel
 	}
-	return 0
 }
